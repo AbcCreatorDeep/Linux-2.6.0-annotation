@@ -64,6 +64,45 @@ SETUPSEG = DEF_SETUPSEG		# 0x9020, this is the current segment
 
 DELTA_INITSEG = SETUPSEG - INITSEG	# 0x0020
 
+
+注意： 实模式的学习 可以理解为 段寄存器 用来将内存分为 0 - F 16 块，后面的四位 IP 为偏移地址
+0x00000 ~ 0x003FF ｜ IVT 中断向量表 Interrupt Vector Table
+                   1024B，256项，每项4B（IP:CS），BIOS初始化，OS后续接管
+0x00400 ~ 0x004FF ｜ BDA BIOS Data Area，BIOS数据区
+                   256B，硬件配置、视频模式、键盘、内存容量等状态
+0x00500 ~ 0x07BFF ｜ 可用常规RAM
+0x07C00 ~ 0x07DFF ｜ MBR Bootloader（BL），512B
+                   BIOS加载LBA0到此，校验0xAA55标记后跳转
+0x07E00 ~ 0x0FFFF ｜ 常规RAM空闲区
+
+0x10000           ｜ SYSSEG = 0x10000
+                   Linux0.11 zImage：内核head.s加载于此（低内存）
+                   Linux2.6.0 bzImage：**不再在这里放完整内核**
+                   bzImage的压缩vmlinux由bootloader直接加载至 0x100000（1MB高端内存）
+0x10000 ~ 0x8FFFF ｜ 低内存空闲区（2.6 bzImage不再占用这片放内核镜像）
+
+0x90000           ｜ INITSEG = 0x90000
+                   setup 把BDA/BIOS硬件参数复制到此处保存
+0x90000 ~ 0x901FF ｜ INITSEG，BIOS硬件信息备份区（512B）
+0x90200           ｜ SETUPSEG = 0x9020（段地址，0x9020 << 4 = 0x90200）
+                   setup.S 实模式代码，2.6 bzImage的实模式setup仍加载在此执行
+0x90220 ~ 0x9FFFF ｜ 剩余常规主内存 Conventional RAM（640KB上限）
+
+0xA0000 ~ 0xBFFFF ｜ VGA显存MMIO（128KB）
+                   A0000:VGA图形帧缓冲；B0000单色文本，B8000彩色文本
+0xC0000 ~ 0xC7FFF ｜ Video BIOS Option ROM 显卡ROM（32KB）
+0xC8000 ~ 0xDFFFF ｜ 其他Option ROM：SCSI/RAID/PXE网卡等扩展ROM（96KB）
+0xE0000 ~ 0xEFFFF ｜ 备用扩展ROM空间（64KB）
+0xF0000 ~ 0xFFFFF ｜ 主板主BIOS ROM（64KB）
+                   复位入口 0xFFFF0
+
+==== 1MB以上高端内存（2.6 bzImage新增核心区域）====
+0x100000          ｜ bzImage 压缩内核镜像起始位置（1MB）
+                   compressed/head_32.S解压入口，解压完成后vmlinux放置于此
+
+
+
+
 .code16 #  当前内核版本 只支撑 16 的引导
 .globl begtext, begdata, begbss, endtext, enddata, endbss
 
@@ -187,7 +226,7 @@ start_of_setup: # linux 的 前置引导程序
 	cmpw	$SIG2, setup_sig2
 	jne	bad_sig
 
-	jmp	good_sig1 # 校验成功
+	jmp	good_sig1 # 校验内核签名成功
 
 # Routine to print asciiz string at ds:si
 prtstr:
@@ -385,7 +424,9 @@ sse_ok: # 还原之前设置的 DS
 # This is documented at http://www.teleport.com/~acpi/acpihtml/topic245.htm
 
 #define SMAP  0x534d4150
-# BIOS 的E820H 的 IVT 的handler 就会在每一次调用返回一段 内存的映射信息
+
+BIOS 的E820H 的 IVT 的handler 就会在每一次调用返回一段 内存的映射信息
+这些映射信息 通过 entry 的方式排布放到  #define E820MAP	0x2d0 变量处，考虑下：段为 90000，那么这里应该是 902d0
 
 meme820:
 	xorl	%ebx, %ebx			# continuation counter
@@ -483,6 +524,10 @@ mem88:
 	call	video				# NOTE: we need %ds pointing
 						# to bootsector
 
+// 从 BIOS 中断向量表拿到第一块、第二块硬盘的 BIOS 硬盘参数表，
+// 复制到 INITSEG（0x9000 段，物理 0x90000）的 0x80、0x90 偏移位置保存。
+// 问：IVT 不是 handler么？不尽然，里面还可以放变量
+
 # Get hd0 data...
 	xorw	%ax, %ax
 	movw	%ax, %ds
@@ -542,7 +587,7 @@ no_psmouse:
 
 # 切换 到保护模式
 # Now we want to move to protected mode ...
-	cmpw	$0, %cs:realmode_swtch
+	cmpw	$0, %cs:realmode_swtch // i386 通常不走这个自定义切换 代码，忽略。
 	jz	rmodeswtch_normal
 
 	lcall	*%cs:realmode_swtch
@@ -552,13 +597,15 @@ no_psmouse:
 # 进入标准 X86 切保护模式的代码
 rmodeswtch_normal:
         pushw	%cs
-	call	default_switch 
+	call	default_switch // 这里就是通过硬件和软件手段 关闭一切中断，包括 NMI 中断 
 
 rmodeswtch_end:
 # we get the code32 start address and modify the below 'jmpi'
 # (loader may have changed it)
 
-    # 将 code32_start 的启动地址 赋值给 code32
+将 code32_start 的启动地址 赋值给 code32，注意:
+实模式（16bit 代码段）完全可以使用 EAX/EBX/ECX 这类 32 位通用寄存器，靠 `0x66` 操作数大小前缀实现，不需要切保护模式.
+代码用 .code16，汇编器识别 movl指令，自动编码带上 0x66 前缀。这条指令依然跑在实模式，只是这条单条指令强制使用 32 位操作数
 	movl	%cs:code32_start, %eax 
 	movl	%eax, %cs:code32
 
@@ -569,7 +616,8 @@ rmodeswtch_end:
 						# loaded zImage
 						# .. or else we have a high
 						# loaded bzImage
-	jmp	end_move			# ... and we skip moving
+	都是 bzImage 大内核，被BL 加载到 1M 以上，这里不需要挪动
+	jmp	end_move			# ... and we skip moving  
 
 do_move0:
 	movw	$0x100, %ax			# start of destination segment
@@ -764,7 +812,9 @@ flush_instr:
 #	take our 48 bit far pointer. (INTeL 80386 Programmer's Reference
 #	Manual, Mixing 16-bit and 32-bit code, page 16-6)
 
-#   手写 ISA 指令集 
+手写 ISA 指令集  ，0x66  用于扩展操作数大小，变为 32bit 地址，至此 指令 buffer 里的 IP 变为 EIP，
+其中 0x100000 已经在 前面 movl	%cs:code32_start, %eax movl	%eax, %cs:code32 被设置为了：code32_start
+所以，这里直接跳转到 0x100000 执行，而这里就是 已经被BL 加载到 高端内存的 带解压代码的 内核： 解压代码(head.s) 压缩的bzimage（head.S + 代码 + 数据）
 
 	.byte 0x66, 0xea			# prefix + jmpi-opcode
 code32:	.long	0x100000				# will be set to 0x100000
