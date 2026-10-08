@@ -1,0 +1,31 @@
+{
+    "clangd.arguments": [
+        "--compile-commands-dir=${workspaceFolder}",
+        "--background-index",
+        "--clang-tidy",
+        "--header-insertion=iwyu",
+        "--completion-style=detailed",
+        "--pch-storage=memory"
+    ],
+    "C_Cpp.dimInactiveRegions": false,
+    "C_Cpp.default.defines": [
+        "HAVE_SYS_UN_H",
+        "__KERNEL__",
+        "CONFIG_X86_32",
+        "CONFIG_X86",
+        "CONFIG_SMP"
+    ],
+    "C_Cpp.default.includePath": [
+        "${workspaceFolder}/**",
+        "${workspaceFolder}/include",
+        "${workspaceFolder}/arch/i386/include"
+    ],
+    "files.exclude": {
+        "**/.git": true,
+        "**/*.o": true
+    },
+    "search.exclude": {
+        "**/node_modules": true,
+        "**/*.o": true
+    }
+}

@@ -1,0 +1,20 @@
+---
+# Clangd configuration for Linux Kernel 2.6.0
+If:
+  Path: .*
+CompileFlags:
+  Add:
+    - -D__KERNEL__
+    - -DCONFIG_X86_32
+    - -DCONFIG_X86
+    - -DCONFIG_SMP
+    - -DHAVE_SYS_UN_H
+    - -Iinclude
+    - -Iarch/i386/include
+    - -Wno-unknown-warning-option
+    - -fms-extensions
+Remove:
+  - -W*
+Index:
+  Background: Build
+  StandardLibrary: true
