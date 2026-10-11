@@ -252,8 +252,13 @@ static __init void parse_cmdline_early (char ** cmdline_p)
 #ifndef CONFIG_DISCONTIGMEM
 static void __init contig_initmem_init(void)
 {
+		// 初始化内核启动临时使用的内存内存分配器：bootmem
+		// end_pfn 表示最后一个 物理内存的页帧，以 8GB 为例：8GB/4KB 注意：如果存放到数组中，需要从 0 下标开始
+		// 这里只是计算多少个页来存放 位图，所以不需要 减 1
         unsigned long bootmap_size, bootmap; 
+		// 所以，这里需要 64个页 来保存 这个位图
         bootmap_size = bootmem_bootmap_pages(end_pfn)<<PAGE_SHIFT;
+		// 继续依赖捡漏的 分配器，从 0 地址向物理内存的顶部，找一片 bootmap_size 的空间 来存放临时分配器的位图信息
         bootmap = find_e820_area(0, end_pfn<<PAGE_SHIFT, bootmap_size);
         if (bootmap == -1L) 
                 panic("Cannot find bootmem map of size %ld\n",bootmap_size);
@@ -377,7 +382,9 @@ void __init setup_arch(char **cmdline_p)
 #ifdef CONFIG_DISCONTIGMEM
 	numa_initmem_init(0, end_pfn); 
 #else
-	contig_initmem_init();  // 初始化 基础 内存分配器
+	//  当前内存分配手段非常简陋：遍历 E820 内存段，找到可用的内存段,然后分配
+	//  所以，当前就需要一个更精细化管理可用物理内存的内存分配器来使用
+	contig_initmem_init();  // 初始化 基础 内存分配器，我们这里先省略 NUMA 架构的，先看 SMP 的 连续物理内存的初始化
 #endif
 
 	/* Reserve direct mapping */

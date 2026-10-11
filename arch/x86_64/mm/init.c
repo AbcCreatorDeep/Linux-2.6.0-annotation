@@ -187,7 +187,7 @@ static __init void *alloc_low_page(int *index, unsigned long *phys)
 	// 我现在只有 物理页帧号，后续想要往这个数据页 去写数据，CPU 就需要 虚拟地址
 	// 而 现在 的 PAGE_OFFSET 的 虚拟地址的映射 还没有起来 ，那怎么访问呢？
 
-	// 找两个在 head.S 中预留的2个 虚拟地址 的映射区，临时映射 4KB 的页
+	// 找两个在 head.S 中预留的 2 个 虚拟地址 的映射区，临时映射 4KB 的页
 	for (i = 0; temp_mappings[i].allocated; i++) {
 		if (!temp_mappings[i].pmd) 
 			panic("alloc_low_page: ran out of temp mappings"); 
@@ -327,7 +327,11 @@ void __init init_memory_mapping(void)
 	 * 1、在 init_level4_pgt 中 找一项 存 PGD : 一项 能覆盖 512GB 的物理地址
 	 * 2、在 PGD 中 保存 PMD 地址信息: 一项 能覆盖 1GB 的物理地址
 	 * 3、在 PMD 中 保存 2MB 的物理页帧信息 ： 一项能 覆盖 2MB 的物理地址
-	 * 
+	 * 4、以 8GB 举例：
+	 *   init_level4_pgt 里面填写 PAGE_OFFSET 的高九位的 entry，填 pgd_t *pgd = alloc_low_page(&map, &pgd_phys);
+	 * 	 分配的这个 4KB 的页的物理地址 ，结果：这一项能映射 512GB 的物理内存。
+	 *   继续，填 8 个 4KB 页的地址 到 pgd_t *pgd  entry，结果：这一项能映射 8GB 的物理内存。
+	 *   继续，填 8 个 4KB 页的地址 的 PMD 里的 8*512 个entry，结果： 一项能映射 2MB 的物理内存
 	 */
 	for (adr = PAGE_OFFSET; adr < end; adr = next) { 
 		int map;
@@ -343,9 +347,15 @@ void __init init_memory_mapping(void)
 
 		unmap_low_page(map);   
 	} 
-
+	
+	// CR3 指向当前工作的顶级页表 init_level4_pgt 的首地址
+	// CR0 的 PG 置 1 ，开启分页机制
+	// CR4 的 PAE 置 1 ，开启物理地址扩展机制
 	asm volatile("movq %%cr4,%0" : "=r" (mmu_cr4_features));
+	// 刷新 所有的 TLB 包括 GLOBAL TLB
 	__flush_tlb_all();
+
+	// 至此： 虚拟内存 0x0000010000000000  + 8GB 的物理内存 映射完成，而且正式生效
 	early_printk("kernel direct mapping tables upto %lx @ %lx-%lx\n", end, 
 	       table_start<<PAGE_SHIFT, 
 	       table_end<<PAGE_SHIFT);

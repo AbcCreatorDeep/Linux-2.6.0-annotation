@@ -23,11 +23,24 @@
 #define __flush_tlb_global()						\
 	do {								\
 		unsigned long tmpreg;					\
-									\
+		// 	保证所有情况下 都会刷新 TLB 高版本已经纠正
+		// 在 支持 CR4 寄存器的 CPU 上直接 重置 CR4 的 PGE 位来刷新 TLB 全局条目
+	    //   if (cr4 & X86_CR4_PGE) {
+		//		clear PGE and flush TLB of all entries */
+		//		native_write_cr4(cr4 & ~X86_CR4_PGE);
+				/* restore PGE as it was before */
+		//		ative_write_cr4(cr4);
+		//	} else {	 // 在 不支持 CR4 寄存器的 CPU 上直接 重置 CR3 来刷新 TLB 条目
+				/* do it with cr3, letting kaiser flush user PCID */
+		//			__native_flush_tlb();
+		//		}
+	
 		__asm__ __volatile__(					\
 			"movq %1, %%cr4;  # turn off PGE     \n"	\
+			// 目的： 刷新 CR3 寄存器（ 重置 CR3 寄存器 ），从而刷新TLB 使得上面修改的页表生效
 			"movq %%cr3, %0;  # flush TLB        \n"	\
 			"movq %0, %%cr3;                     \n"	\
+			// 刷新 CR4
 			"movq %2, %%cr4;  # turn PGE back on \n"	\
 			: "=&r" (tmpreg)				\
 			: "r" (mmu_cr4_features & ~X86_CR4_PGE),	\

@@ -46,12 +46,17 @@ static inline int bad_addr(unsigned long *addrp, unsigned long size)
 	unsigned long addr = *addrp, last = addr + size; 
 
 	/* various gunk below that needed for SMP startup */
+	// 代码不是一个写的  0x0000 - 0x8000 区间的地址不能用：BIOS IVT BDA 跳板代码（AP）
+	// 所以起始分配点只能从 0x8000
+	// 所以，这里面就暴露了 前期的内存分配的窘境：e820map 只有内存段信息，也就是哪些段可以给内核用，哪些不行，
+	// 但是没有指明 这些可用的内存中放了哪些数据，所以就得去避开这些区域
 	if (addr < 0x8000) { 
 		*addrp = 0x8000;
 		return 1; 
 	}
 
 	/* direct mapping tables of the kernel */
+	// 避开前面用来分配 PGD 和 PMD 页表的区域
 	if (last >= table_start<<PAGE_SHIFT && addr < table_end<<PAGE_SHIFT) { 
 		*addrp = table_end << PAGE_SHIFT; 
 		return 1;
@@ -67,8 +72,9 @@ static inline int bad_addr(unsigned long *addrp, unsigned long size)
 #endif
 	/* kernel code + 640k memory hole (later should not be needed, but 
 	   be paranoid for now) */
+	// 避开1M - 内核大小 的 区域，避免覆盖内核代码和数据
 	if (last >= 640*1024 && addr < __pa_symbol(&_end)) { 
-		*addrp = __pa_symbol(&_end);
+		*addrp = __pa_symbol(&_end); // 分配起点从 内核的末尾 内存处分配
 		return 1;
 	}
 	/* XXX ramdisk image here? */ 
@@ -101,7 +107,7 @@ unsigned long __init find_e820_area(unsigned long start, unsigned long end, unsi
 
 		struct e820entry *ei = &e820.map[i]; 
 		unsigned long addr = ei->addr, last; 
-		if (ei->type != E820_RAM)  // 等价于 可用内存
+		if (ei->type != E820_RAM)  // 等价于 可用内存 类型为 USABLE可用的 而不是 reserved 保留的
 			continue; 
 
 

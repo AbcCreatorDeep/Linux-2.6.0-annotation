@@ -32,6 +32,7 @@ unsigned long __init bootmem_bootmap_pages (unsigned long pages)
 {
 	unsigned long mapsize;
 
+	// 向上取整
 	mapsize = (pages+7)/8;
 	mapsize = (mapsize + ~PAGE_MASK) & PAGE_MASK;
 	mapsize >>= PAGE_SHIFT;
