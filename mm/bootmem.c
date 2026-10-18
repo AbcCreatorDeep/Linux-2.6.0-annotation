@@ -53,14 +53,18 @@ static unsigned long __init init_bootmem_core (pg_data_t *pgdat,
 	pgdat_list = pgdat;
 
 	mapsize = (mapsize + (sizeof(long) - 1UL)) & ~(sizeof(long) - 1UL);
+	// 位图的起始地址，而由于 CPU的 MMU 存在，后续访问的时候需要通过虚拟地址
+	// 之前讲过的内核的直接映射区的虚拟地址的起始地址为：PAGE_OFFSET = 0x0000010000000000 
+	// 也就是说这个虚拟地址 映射到 0 物理地址处，所以这里这里转为 虚拟地址只需要：PAGE_OFFSET + mapstart<< PAGE_SHIFT
 	bdata->node_bootmem_map = phys_to_virt(mapstart << PAGE_SHIFT);
 	bdata->node_boot_start = (start << PAGE_SHIFT);
-	bdata->node_low_pfn = end;
+	bdata->node_low_pfn = end; // 管理的页数： 物理内存的 最后一个页帧号
 
 	/*
 	 * Initially all pages are reserved - setup_arch() has to
 	 * register free RAM areas explicitly.
 	 */
+	// 位图中的 每一位 表示一个 4KB 的页，有没有被使用，默认 全部都被占用，后续再根据不使用的内存信息，去把 空闲的页的位 置 0
 	memset(bdata->node_bootmem_map, 0xff, mapsize);
 
 	return mapsize;
@@ -120,9 +124,9 @@ static void __init free_bootmem_core(bootmem_data_t *bdata, unsigned long addr, 
 	 */
 	start = (addr + PAGE_SIZE-1) / PAGE_SIZE;
 	sidx = start - (bdata->node_boot_start/PAGE_SIZE);
-
+	// 从起始位 开始 向后 到 eidx  区间内的 bit 设置为 0
 	for (i = sidx; i < eidx; i++) {
-		if (!test_and_clear_bit(i, bdata->node_bootmem_map))
+		if (!test_and_clear_bit(i, bdata->node_bootmem_map))// 预防措施： 在这里之前 这些位 必须是 1 ，因为 不能重复释放
 			BUG();
 	}
 }
@@ -325,8 +329,8 @@ unsigned long __init free_all_bootmem_node (pg_data_t *pgdat)
 #ifndef CONFIG_DISCONTIGMEM
 unsigned long __init init_bootmem (unsigned long start, unsigned long pages)
 {
-	max_low_pfn = pages;
-	min_low_pfn = start;
+	max_low_pfn = pages; // 管理的页数： 物理内存的 最后一个页帧号
+	min_low_pfn = start;// bootmem 的 位图 的起始页帧
 	return(init_bootmem_core(&contig_page_data, start, 0, pages));
 }
 

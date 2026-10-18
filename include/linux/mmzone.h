@@ -22,7 +22,7 @@
 
 struct free_area {
 	struct list_head	free_list;
-	unsigned long		*map;
+	unsigned long		*map; // 位图： 一个位用于表示 一对伙伴的状态：只能表示 2 个状态
 };
 
 struct pglist_data;
@@ -42,14 +42,22 @@ struct zone_padding {
 #define ZONE_PADDING(name)
 #endif
 
+// 每个 CPU 用于管理 从 伙伴算法中 获取的页 的内存池： 简单的用链表管理页
+// 水位线的定义：
+// low 水位线以下，就需要根据 batch 去伙伴算法 分配页 来填充缓存池 
+// high水位线以上，将高出的部分归还给 伙伴算法，给其他进程分配减少外碎片数量
+
 struct per_cpu_pages {
 	int count;		/* number of pages in the list */
 	int low;		/* low watermark, refill needed */
 	int high;		/* high watermark, emptying needed */
-	int batch;		/* chunk size for buddy add/remove */
-	struct list_head list;	/* the list of pages */
+	int batch;		/* chunk size for buddy add/remove 最大 256KB 个页 */ 
+	struct list_head list;	/* the list of pages */ 
 };
-
+/**
+ * 高版本优化：使用单链表实现 LRU 机制，起始就是 使用栈的特性：后进先出，
+ * 热页放在 链表头部，分配热页也从头部分配，分配冷页 从尾部分配
+ */
 struct per_cpu_pageset {
 	struct per_cpu_pages pcp[2];	/* 0: hot.  1: cold */
 } ____cacheline_aligned_in_smp;
@@ -106,7 +114,8 @@ struct zone {
 	/*
 	 * free areas of different sizes
 	 */
-	struct free_area	free_area[MAX_ORDER];
+	// 管理 0 - 10 中的伙伴页的链表
+	struct free_area	free_area[MAX_ORDER]; 
 
 	/*
 	 * wait_table		-- the array holding the hash table
@@ -138,6 +147,8 @@ struct zone {
 
 	ZONE_PADDING(_pad3_)
 
+	// 多线程优化的手法：大锁、细粒度锁、CAS空间树、TLS 无锁化
+	// 根据 jemalloc 的算法（netty中学过）从大内存中分配小内存，放置在线程 TLS 处 无锁分配【关联：JVM 的TLAM】
 	struct per_cpu_pageset	pageset[NR_CPUS];
 
 	/*
@@ -191,7 +202,7 @@ struct zonelist {
  */
 struct bootmem_data;
 typedef struct pglist_data {
-	struct zone node_zones[MAX_NR_ZONES];
+	struct zone node_zones[MAX_NR_ZONES]; // 多余一个 highmem ，64 bit 没有 highmem
 	struct zonelist node_zonelists[MAX_NR_ZONES];
 	int nr_zones;
 	struct page *node_mem_map;

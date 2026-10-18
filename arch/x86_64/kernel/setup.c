@@ -263,7 +263,15 @@ static void __init contig_initmem_init(void)
         if (bootmap == -1L) 
                 panic("Cannot find bootmem map of size %ld\n",bootmap_size);
         bootmap_size = init_bootmem(bootmap >> PAGE_SHIFT, end_pfn);
+		// 考虑一下：谁现在有 内存的分布信息：e820 map
+		// 先根据 e820 map 来释放 bootmem 分配器的可用内存，
+		// 但是这里面的可用内存，可能已经被占用了：内核代码段、数据段、前面分配的数据、页表等等
+		// 总结：分三步： 1、全部置 1  2、根据 e820 map 将 usable 部分置 0 3、根据内核占用的内存来将 置 0 的部分再次置 1
         e820_bootmem_free(&contig_page_data, 0, end_pfn << PAGE_SHIFT); 
+		// 到这里 ： 位图已经按照 上述 第二步 来我按成 置 0 了，其中的状态就是 usable 的部分  一串 0  ，其他的部分都是 1
+		// 例如：1000111110000001111000000000011111111111111111111111111111100000000000000000000000000000000000
+		// 扣除 bootmem位图占用的内存空间以 8GB 为例：8GB/4KB = 64 个 页，所以就把从 bootmap 地址 ----- 
+		// bootmap + bootmap_size  64 个 bit ，从0 设置为1
         reserve_bootmem(bootmap, bootmap_size);
 } 
 #endif
@@ -380,7 +388,7 @@ void __init setup_arch(char **cmdline_p)
 	init_memory_mapping();  // 创建 linux 内核工作时使用的 全映射 的 虚拟内存 从：0x0000010000000000 到 物理内存的极限
 
 #ifdef CONFIG_DISCONTIGMEM
-	numa_initmem_init(0, end_pfn); 
+	numa_initmem_init(0, end_pfn);  // 不要管这个宏，这是 NUMA 架构
 #else
 	//  当前内存分配手段非常简陋：遍历 E820 内存段，找到可用的内存段,然后分配
 	//  所以，当前就需要一个更精细化管理可用物理内存的内存分配器来使用
@@ -388,10 +396,13 @@ void __init setup_arch(char **cmdline_p)
 #endif
 
 	/* Reserve direct mapping */
+	// 扣除 页表占用的内存 （这个页表是什么：PGD 和 PMD 直接内存映射区的页表：从：0x0000010000000000）
+	// 举例：11110000000111111111（页表）0000000000000111111111111111111111111111111111111111（位图）00000000
 	reserve_bootmem_generic(table_start << PAGE_SHIFT, 
 				(table_end - table_start) << PAGE_SHIFT);
 
 	/* reserve kernel */
+	// 从 1MB 到内核结束的内存空间，内核已经使用了，所以要在 bootmem 分配器中标记为已使用
 	unsigned long kernel_end;
 	kernel_end = round_up(__pa_symbol(&_end),PAGE_SIZE);
 	reserve_bootmem_generic(HIGH_MEMORY, kernel_end - HIGH_MEMORY);
@@ -400,14 +411,17 @@ void __init setup_arch(char **cmdline_p)
 	 * reserve physical page 0 - it's a special BIOS page on many boxes,
 	 * enabling clean reboots, SMP operation, laptop functions.
 	 */
+	// 扣除 第一个页帧，不能用，为什么？因为 BIOS 页后续可能在跳板代码中 使用，或者 睡眠唤醒中使用
 	reserve_bootmem_generic(0, PAGE_SIZE);
 
-#ifdef CONFIG_SMP
+#ifdef CONFIG_SMP 
 	/*
 	 * But first pinch a few for the stack/trampoline stuff
 	 * FIXME: Don't need the extra page at 4K, but need to fix
 	 * trampoline before removing it. (see the GDT stuff)
 	 */
+	// SMP 系统，有多个 CPU ，当前执行的是 BSP CPU ，后续需要唤醒 其他的AP CPU ，所以他们也会存在 16 -> 32 -> 64 
+	// 的转换过程，所以依旧需要 低端 1M 以内的跳板代码和 栈，所以将这部分代码所占用的 4KB 的页 设置为 1
 	reserve_bootmem_generic(PAGE_SIZE, PAGE_SIZE);
 
 	/* Reserve SMP trampoline */
@@ -418,6 +432,7 @@ void __init setup_arch(char **cmdline_p)
        /*
         * Reserve low memory region for sleep support.
         */
+	   // 系统睡眠 唤醒后 需要依赖低端物理内存上的 ACPI 的一些表格信息，所以这里需要将这些表格信息占用的内存空间标记为已使用
        acpi_reserve_bootmem();
 #endif
 #ifdef CONFIG_X86_LOCAL_APIC
@@ -426,6 +441,7 @@ void __init setup_arch(char **cmdline_p)
 	 */
 	find_smp_config();
 #endif
+// 预留 内核启动时使用的 initrd 的内存空间（先无视这个部分，目前讲的是内存 分配机制，与这个 引导 文件系统的 INIT RD 无关）
 #ifdef CONFIG_BLK_DEV_INITRD
 	if (LOADER_TYPE && INITRD_START) {
 		if (INITRD_START + INITRD_SIZE <= (end_pfn << PAGE_SHIFT)) {
@@ -444,7 +460,8 @@ void __init setup_arch(char **cmdline_p)
 	}
 #endif
 
-	paging_init();
+	// 该方法过后，伙伴算法的骨架和数据都有了，还差 将 bootmem 标记可用的数据页 放到 伙伴算法中
+	paging_init(); 
 
 #ifndef CONFIG_SMP
 	/* Temporary hack: disable the IO-APIC for UP Nvidia and 

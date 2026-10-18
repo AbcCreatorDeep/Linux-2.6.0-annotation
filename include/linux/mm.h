@@ -170,7 +170,8 @@ struct inode;
 struct page {
 	unsigned long flags;		/* atomic flags, some possibly
 					   updated asynchronously */
-	atomic_t count;			/* Usage count, see below. */
+	// 垃圾回收算法：引用计数法
+	atomic_t count;			/* Usage count, see below. */ 
 	struct list_head list;		/* ->mapping has some page lists. */
 	struct address_space *mapping;	/* The inode (or ...) we belong to. */
 	unsigned long index;		/* Our offset within mapping. */

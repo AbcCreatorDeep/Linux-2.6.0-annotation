@@ -136,12 +136,12 @@ void __init e820_bootmem_free(pg_data_t *pgdat, unsigned long start,unsigned lon
 	for (i = 0; i < e820.nr_map; i++) {
 		struct e820entry *ei = &e820.map[i]; 
 		unsigned long last, addr;
-
+		// 这里特别注意：只有 usable（E820_RAM） 的内存 才会被置 0
 		if (ei->type != E820_RAM || 
 		    ei->addr+ei->size <= start || 
 		    ei->addr > end)
 			continue;
-
+		// 对齐到 4kb 地址处，因为 bootmem 分配器是以页为单位来分配的 
 		addr = round_up(ei->addr, PAGE_SIZE);
 		if (addr < start) 
 			addr = start;
@@ -151,6 +151,7 @@ void __init e820_bootmem_free(pg_data_t *pgdat, unsigned long start,unsigned lon
 			last = end; 
 
 		if (last > addr && last-addr >= PAGE_SIZE)
+			//  以后，看到 free_bootmem_xxx 的东西，就是将 位图 中 addr - last 区间的位 置 0，表示这些页是空闲的
 			free_bootmem_node(pgdat, addr, last-addr);
 	}
 }

@@ -58,7 +58,7 @@
 #ifndef CONFIG_DISCONTIGMEM
 /* use the per-pgdat data instead for discontigmem - mbligh */
 unsigned long max_mapnr;
-struct page *mem_map;
+struct page *mem_map; // 内核中所有物理页帧的数组，数组中的每个元素都是一个 struct page 结构体，表示一个物理页帧
 
 EXPORT_SYMBOL(max_mapnr);
 EXPORT_SYMBOL(mem_map);

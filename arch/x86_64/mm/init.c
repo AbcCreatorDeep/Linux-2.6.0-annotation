@@ -387,18 +387,25 @@ void zap_low_mappings(void)
 #ifndef CONFIG_DISCONTIGMEM
 void __init paging_init(void)
 {
+	// 现在，内核可以使用 bootmem 分配内存，不再使用 从 某个地址 到某个地址区间通过 e820 内存段来分配内存了
+	// but，这里 没有伙伴算法，我们的目的： 创建并初始化伙伴算法
+	// 总所周知： 伙伴算法是根据 zone 来管理内存的，而zone 的构建，是根据 功能来划分的
+	// 在当前版本中：某些 DMA 的设备 只支持 16m 的物理内存寻址，所以 这段内存称之为 ZONE_DMA
+	// 而 其他的物理内存，称之为 ZONE_NORMAL，而在 64 bit 机 虚拟地址 可以覆盖整个物理内存，所以没有高端内存
 	{
 		unsigned long zones_size[MAX_NR_ZONES] = {0, 0, 0};
 		unsigned int max_dma;
-
+		// MAX_DMA_ADDRESS 为 低 16M 的虚拟地址，这里将它转为 物理地址，然后右移 PAGE_SHIFT ，得到 16M 的页帧号
 		max_dma = virt_to_phys((char *)MAX_DMA_ADDRESS) >> PAGE_SHIFT;
 
 		if (end_pfn < max_dma)
 			zones_size[ZONE_DMA] = end_pfn;
 		else {
-			zones_size[ZONE_DMA] = max_dma;
-			zones_size[ZONE_NORMAL] = end_pfn - max_dma;
+			zones_size[ZONE_DMA] = max_dma; // 16M 的页帧数.也就是 低 16 M 中 有多少个 4KB 的页
+			zones_size[ZONE_NORMAL] = end_pfn - max_dma; // 16M 以上的页帧数.也就是 8GB - 16M 中间有多少个 4KB 的页
 		}
+
+		// 所以 zone size 中包含了什么？ 包含了每一个 zone 中 的页数
 		free_area_init(zones_size);
 	}
 	return;

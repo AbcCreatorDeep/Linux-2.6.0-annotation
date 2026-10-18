@@ -1175,14 +1175,18 @@ static void __init calculate_zone_totalpages(struct pglist_data *pgdat,
 	unsigned long realtotalpages, totalpages = 0;
 	int i;
 
+	// 计算当前系统中总共有多少个页
 	for (i = 0; i < MAX_NR_ZONES; i++)
 		totalpages += zones_size[i];
-	pgdat->node_spanned_pages = totalpages;
 
+	// 该变量保存了当前 内存中总的 页数：8GB/4KB
+	pgdat->node_spanned_pages = totalpages;
 	realtotalpages = totalpages;
 	if (zholes_size)
 		for (i = 0; i < MAX_NR_ZONES; i++)
 			realtotalpages -= zholes_size[i];
+	// 该变量保存了当前 内存中当前 pgdata_t 管理的可用的页数
+	// 但是由于 	zholes_size 是null，所以这里等价于 	 node_spanned_pages 8GB/4KB 个 
 	pgdat->node_present_pages = realtotalpages;
 	printk("On node %d totalpages: %lu\n", pgdat->node_id, realtotalpages);
 }
@@ -1215,10 +1219,10 @@ void __init memmap_init_zone(struct page *start, unsigned long size, int nid,
 		unsigned long zone, unsigned long start_pfn)
 {
 	struct page *page;
-
+	// 前面分配了放 page 页的内存，这里开始初始化每一个 page 结构的变量
 	for (page = start; page < (start + size); page++) {
 		set_page_zone(page, nid * MAX_NR_ZONES + zone);
-		set_page_count(page, 0);
+		set_page_count(page, 0); 
 		SetPageReserved(page);
 		INIT_LIST_HEAD(&page->list);
 #ifdef WANT_PAGE_VIRTUAL
@@ -1252,22 +1256,25 @@ static void __init free_area_init_core(struct pglist_data *pgdat,
 
 	pgdat->nr_zones = 0;
 	init_waitqueue_head(&pgdat->kswapd_wait);
-	
+	// 初始化：DMA 和 NORMAL zone 
 	for (j = 0; j < MAX_NR_ZONES; j++) {
 		struct zone *zone = pgdat->node_zones + j;
 		unsigned long size, realsize;
 		unsigned long batch;
 
 		zone_table[nid * MAX_NR_ZONES + j] = zone;
-		realsize = size = zones_size[j];
+		realsize = size = zones_size[j]; // 该 zone 的页数
 		if (zholes_size)
 			realsize -= zholes_size[j];
 
+		// 该 zone 中 包含的可用页 和 总页数，在SMP 架构下，两者相同
 		zone->spanned_pages = size;
 		zone->present_pages = realsize;
+
 		zone->name = zone_names[j];
 		spin_lock_init(&zone->lock);
 		spin_lock_init(&zone->lru_lock);
+
 		zone->zone_pgdat = pgdat;
 		zone->free_pages = 0;
 
@@ -1278,72 +1285,98 @@ static void __init free_area_init_core(struct pglist_data *pgdat,
 		 *
 		 * OK, so we don't know how big the cache is.  So guess.
 		 */
+
+		// 设计到 从 伙伴算法批量获取一段内存来给当前 CPU 分配，那么必然设计到：一次拿多少页？
 		batch = zone->present_pages / 1024;
-		if (batch * PAGE_SIZE > 256 * 1024)
+		if (batch * PAGE_SIZE > 256 * 1024) // 最多一次获取 256 KB的页
 			batch = (256 * 1024) / PAGE_SIZE;
+
 		batch /= 4;		/* We effectively *= 4 below */
-		if (batch < 1)
+
+		if (batch < 1) // 最小一个 
 			batch = 1;
 
+		// 根据CPU 的个数，初始化用于管理 这写 CPU 缓存的 伙伴算法中获取的页
+		// CPU 中存在 TLB 和 L1 L2 L3 缓存，当一个页如果刚使用完就释放到 CPU 的缓存池中，那么属于 HOT 页，否则属于 COLD 页
 		for (cpu = 0; cpu < NR_CPUS; cpu++) {
 			struct per_cpu_pages *pcp;
 
 			pcp = &zone->pageset[cpu].pcp[0];	/* hot */
 			pcp->count = 0;
+
+			// 热页 ： 性能要求高的场景使用，2 * batch 可以保证 仍然存在页可以给进程分配，6 * batch 可以保证缓存更多的页
 			pcp->low = 2 * batch;
 			pcp->high = 6 * batch;
+
 			pcp->batch = 1 * batch;
 			INIT_LIST_HEAD(&pcp->list);
 
 			pcp = &zone->pageset[cpu].pcp[1];	/* cold */
 			pcp->count = 0;
+
+			// 冷页 ： 性能要求不高的场景使用，0 可以保证 伙伴算法中的页尽可能的给其他进程分配，
+			// 2 * batch 缓存一定的页，尽可能将页返还给 伙伴算法，减轻 内存外碎片问题
 			pcp->low = 0;
 			pcp->high = 2 * batch;
+
 			pcp->batch = 1 * batch;
 			INIT_LIST_HEAD(&pcp->list);
 		}
+
 		printk("  %s zone: %lu pages, LIFO batch:%lu\n",
 				zone_names[j], realsize, batch);
+
 		INIT_LIST_HEAD(&zone->active_list);
-		INIT_LIST_HEAD(&zone->inactive_list);
 		atomic_set(&zone->refill_counter, 0);
+		INIT_LIST_HEAD(&zone->inactive_list);
+
 		zone->nr_active = 0;
 		zone->nr_inactive = 0;
-		if (!size)
+
+		// 	unsigned long zones_size[MAX_NR_ZONES] = {0, 0, 0};
+		if (!size) 
 			continue;
 
 		/*
 		 * The per-page waitqueue mechanism uses hashed waitqueues
 		 * per zone.
 		 */
+		// 进程 等待 的 hash 表（使用链地址法）
 		zone->wait_table_size = wait_table_size(size);
 		zone->wait_table_bits =
 			wait_table_bits(zone->wait_table_size);
 		zone->wait_table = (wait_queue_head_t *)
 			alloc_bootmem_node(pgdat, zone->wait_table_size
 						* sizeof(wait_queue_head_t));
-
+			
 		for(i = 0; i < zone->wait_table_size; ++i)
 			init_waitqueue_head(zone->wait_table + i);
-
+		
+	    // 把不用的 HIGHMEM 也算在里面了，十分不合理
 		pgdat->nr_zones = j+1;
 
 		zone->zone_mem_map = lmem_map;
-		zone->zone_start_pfn = zone_start_pfn;
+		zone->zone_start_pfn = zone_start_pfn;// 当前 zone的起始页帧号：DMA 0，NORMAL：16M的那个页的页帧号
 
 		if ((zone_start_pfn) & (zone_required_alignment-1))
 			printk("BUG: wrong zone alignment, it will crash\n");
 
+
+	
+		// 至此 ，所有 ZONE 中的页对应的元数据结构的 struct page 的属性填充完毕 
 		memmap_init(lmem_map, size, nid, j, zone_start_pfn);
 
 		zone_start_pfn += size;
 		lmem_map += size;
+		
 
+		// 一切具备，只欠东风：0 ------- 10 的 空闲链表的头部还没有初始化
 		for (i = 0; ; i++) {
 			unsigned long bitmap_size;
 
 			INIT_LIST_HEAD(&zone->free_area[i].free_list);
 			if (i == MAX_ORDER-1) {
+				// 最后一层 ，尽管两个物理内存连续，但是不能分配，所以最后一层没有伙伴
 				zone->free_area[i].map = NULL;
 				break;
 			}
@@ -1371,6 +1404,12 @@ static void __init free_area_init_core(struct pglist_data *pgdat,
 			 * Finally, we LONG_ALIGN because all bitmap
 			 * operations are on longs.
 			 */
+
+			// 初始化位图，每位表示 两个 4kb 页，（size - 1 ) >> 1  = 需要多少个 bit 位
+			// 需要多少个 bit 位 >> 3 = 需要多少个 8 byte
+			// 所以写在一起： （size - 1 ) >> 4
+			// 因为 伙伴算法 都是 从上一级 二分下来的，所以每上一级，伙伴减半 所以 
+			// 最终得到：(size-1) >> (i+4)
 			bitmap_size = (size-1) >> (i+4);
 			bitmap_size = LONG_ALIGN(bitmap_size+1);
 			zone->free_area[i].map = 
@@ -1379,21 +1418,27 @@ static void __init free_area_init_core(struct pglist_data *pgdat,
 	}
 }
 
+// smp 架构下：zholes_size 变量是 NULL ，因为不存在 内存空洞（NUMA 的 ，不是 MMIO 的）
 void __init free_area_init_node(int nid, struct pglist_data *pgdat,
 		struct page *node_mem_map, unsigned long *zones_size,
 		unsigned long node_start_pfn, unsigned long *zholes_size)
 {
 	unsigned long size;
 
-	pgdat->node_id = nid;
-	pgdat->node_start_pfn = node_start_pfn;
+	pgdat->node_id = nid; // 0 不是 NUMA 
+	pgdat->node_start_pfn = node_start_pfn; // 0 从第一个页帧开始
 	calculate_zone_totalpages(pgdat, zones_size, zholes_size);
-	if (!node_mem_map) {
+	if (!node_mem_map) { // 分配代表所有物理页 的 元数据结构： page 数组
 		size = (pgdat->node_spanned_pages + 1) * sizeof(struct page);
-		node_mem_map = alloc_bootmem_node(pgdat, size);
+		node_mem_map = alloc_bootmem_node(pgdat, size); // 算出总的字节数，那么使用 bootmem 分配器 分配 这段内存
+		// 从 bootmem 的起始分配帧开始，从低内存向后找连续 size 对齐 到 4KB / 4KB 个 页帧，且 在bootmen 中 位为 0 的页帧
+		// 将他们置 0 ，然后根据页帧号 把 起始的页帧转为 虚拟地址，返回给 node_mem_map
+		// 举例，当前初始： 1111011111111000000000000000
+		// 分配后：1111011111111 110000000000000
 	}
 	pgdat->node_mem_map = node_mem_map;
 
+	// 初始化 zone 结构
 	free_area_init_core(pgdat, zones_size, zholes_size);
 	memblk_set_online(node_to_memblk(nid));
 
@@ -1401,17 +1446,21 @@ void __init free_area_init_node(int nid, struct pglist_data *pgdat,
 }
 
 #ifndef CONFIG_DISCONTIGMEM
-static bootmem_data_t contig_bootmem_data;
+static bootmem_data_t contig_bootmem_data; // bootmem 位图分配器
 struct pglist_data contig_page_data = { .bdata = &contig_bootmem_data };
 
 EXPORT_SYMBOL(contig_page_data);
 
 
-// 初始化 pglist_data
+// 初始化 pglist_data 中的字段
 void __init free_area_init(unsigned long *zones_size)
 {
+	// 之前说过：在NUMA 架构上，一个 package 就是一个 pgdata_t，而 这里 我们只讲 SMP ，所以只有个 pgdata_t，所以这里直接写死 
+	// 0，从而复用 numa 初始化代码
 	free_area_init_node(0, &contig_page_data, NULL, zones_size,
 			__pa(PAGE_OFFSET) >> PAGE_SHIFT, NULL);
+	// 以 8gb 为例，总共：2,097,152 个 page 页，所以这个数组的大小 为 ： 2,097,152 * sizeof（struct page）
+	// 所以 struct page 结构的大小如果太大，将会 消耗更多的物理内存，导致 用户物理内存减少
 	mem_map = contig_page_data.node_mem_map;
 }
 #endif
