@@ -151,7 +151,7 @@ void __init e820_bootmem_free(pg_data_t *pgdat, unsigned long start,unsigned lon
 			last = end; 
 
 		if (last > addr && last-addr >= PAGE_SIZE)
-			//  以后，看到 free_bootmem_xxx 的东西，就是将 位图 中 addr - last 区间的位 置 0，表示这些页是空闲的
+			//  以后，看到 free_bootmem_xxx 的东西，就是将 位图 中 addr - last 区间的 4KB 的页对应的 位 置 0，表示这些页是空闲的
 			free_bootmem_node(pgdat, addr, last-addr);
 	}
 }

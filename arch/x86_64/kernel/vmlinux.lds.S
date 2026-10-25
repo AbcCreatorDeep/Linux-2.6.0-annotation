@@ -8,6 +8,8 @@ OUTPUT_FORMAT("elf64-x86-64", "elf64-x86-64", "elf64-x86-64")
 OUTPUT_ARCH(i386:x86-64)
 ENTRY(_start)
 jiffies_64 = jiffies;
+// gcc 编译分两个大步骤： 1、gcc 编译为 .o 文件 2、链接为 目标文件（动态链接库、静态你链接库、可执行文件）
+// 如果存在自定义的节，那么就需要 一个 xxxx.lds.S 的描述文件，来描述 链接后 的 整个 内存布局信息
 SECTIONS
 {
   // 这个东西就是个说明书，0xffffffff80000000 映射到 物理 0 地址处， 100000 物理地址 1M
@@ -121,9 +123,11 @@ SECTIONS
   .init.ramfs : { *(.init.ramfs) }
   __initramfs_end = .;	
   . = ALIGN(32);
-  __per_cpu_start = .;
+
+  __per_cpu_start = .;   // . 就是取 从 0xffffffff80100000 虚拟地址 放到这里时 的 虚拟地址
   .data.percpu  : { *(.data.percpu) }
   __per_cpu_end = .;
+
   . = ALIGN(4096);
   __init_end = .;
 

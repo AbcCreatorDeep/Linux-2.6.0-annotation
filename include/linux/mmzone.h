@@ -203,7 +203,7 @@ struct zonelist {
 struct bootmem_data;
 typedef struct pglist_data {
 	struct zone node_zones[MAX_NR_ZONES]; // 多余一个 highmem ，64 bit 没有 highmem
-	struct zonelist node_zonelists[MAX_NR_ZONES];
+	struct zonelist node_zonelists[MAX_NR_ZONES]; // 数组固定 3个，64 bit 没有 highmem
 	int nr_zones;
 	struct page *node_mem_map;
 	unsigned long *valid_addr_bitmap;

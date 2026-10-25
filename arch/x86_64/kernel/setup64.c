@@ -120,32 +120,45 @@ __setup("noexec32=", nonx32_setup);
  * Great future plan:
  * Declare PDA itself and support (irqstack,tss,pml4) as per cpu data.
  * Always point %gs to its beginning
+ * 
+ * #define DEFINE_PER_CPU(type, name) \
+    __attribute__((__section__(".data.percpu"))) __typeof__(type) per_cpu__##name
+	注意： 这里 分配的是编译期 定义的 per cpu 变量，而不是 动态分配的 per cpu 变量
  */
 void __init setup_per_cpu_areas(void)
 { 
 	int i;
 	unsigned long size;
-
+	
 	/* Copy section for each CPU (we discard the original) */
+
+	// 这东西 是啥？ 什么是 section （节）？什么是segment （段）？
 	size = ALIGN(__per_cpu_end - __per_cpu_start, SMP_CACHE_BYTES);
 #ifdef CONFIG_MODULES
 	if (size < PERCPU_ENOUGH_ROOM)
 		size = PERCPU_ENOUGH_ROOM;
 #endif
-
+	// 当前 CPU 为 BSP CPU ，而 在 SMP 中，当前 BSP cpu 需要唤醒 其他的 AP ，所以需要给他们准备好 PDA 数据
+	// BSP 的 PDA 谁分配的？
 	for (i = 0; i < NR_CPUS; i++) { 
 		unsigned char *ptr;
 		/* If possible allocate on the node of the CPU.
 		   In case it doesn't exist round-robin nodes. */
+		   // Linux 必须要保证 每一个 CPU 的 pda 数据在 自己的内存条上。每个 NODE 有自己的 bootmem 和 PGDATAT
 		if (!NODE_DATA(i % numnodes)) { 
 			printk("cpu with no node %d, numnodes %d\n", i, numnodes);
-			ptr = alloc_bootmem(size);
-		} else { 
+			ptr = alloc_bootmem(size); // 借用 bootmem 分配其他 CPU 使用的 PDA 结构
+		} else {  // 这个方法不走 只讲 SMP
 			ptr = alloc_bootmem_node(NODE_DATA(i % numnodes), size);
 		}
 		if (!ptr)
 			panic("Cannot allocate cpu data for CPU %d\n", i);
+
+
+		// 保存 一个 区间 	__per_cpu_start -> 这个 CPU 的 per cpu data 相对位移
 		cpu_pda[i].data_offset = ptr - __per_cpu_start;
+
+		// 将 __per_cpu_start -> __per_cpu_end 区间的数据拷贝到当前分配的 ptr 指向的内存域
 		memcpy(ptr, __per_cpu_start, __per_cpu_end - __per_cpu_start);
 	}
 } 

@@ -395,19 +395,25 @@ asmlinkage void __init start_kernel(void)
 	lock_kernel();
 	printk(linux_banner);
 
-	setup_arch(&command_line); // 设置 与 CPU 架构相关的信息
+	setup_arch(&command_line); // 设置 与 CPU 架构相关的信息， pg data 结构 初始化完毕、zone 初始化完毕
 
-	setup_per_zone_pages_min();
+	setup_per_zone_pages_min(); // 设置 每个 zone 的 pages_min 、pages_low、pages_high
+ 	// 给 每 个 CPU 设置 对应的 per cpu data 区域 ，并将 
+	// 编译器的节的数据模板 复制到 对应CPU 的 区域中，并将不同CPU 的变量的偏移量 保存在 CPU 自己的 PDA 的结构中
+	// cpu_pda[i].data_offset = ptr - __per_cpu_start;
+	// 后续想要访问 PER CPU 变量： gs:data_offset + 变量地址
 	setup_per_cpu_areas();
-
+	
 	/*
 	 * Mark the boot cpu "online" so that it can call console drivers in
 	 * printk() and can access its per-cpu storage.
 	 */
-	smp_prepare_boot_cpu();
+	smp_prepare_boot_cpu(); // 标记 当前 BSP CPU 在 内核 可用 CPU map 中的位置
 
-	build_all_zonelists();
+	build_all_zonelists();  // 
+
 	page_alloc_init();
+	
 	printk("Kernel command line: %s\n", saved_command_line);
 	parse_args("Booting kernel", command_line, __start___param,
 		   __stop___param - __start___param,

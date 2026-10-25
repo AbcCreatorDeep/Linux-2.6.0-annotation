@@ -54,7 +54,7 @@ struct zone *zone_table[MAX_NR_ZONES*MAX_NUMNODES];
 EXPORT_SYMBOL(zone_table);
 
 static char *zone_names[MAX_NR_ZONES] = { "DMA", "Normal", "HighMem" };
-int min_free_kbytes = 1024;
+int min_free_kbytes = 1024; // 最低的 page 页的大小，单位是 KB
 
 /*
  * Temporary debugging check for pages not lying within a given zone.
@@ -1045,9 +1045,14 @@ void show_free_areas(void)
 
 /*
  * Builds allocation fallback zone lists.
+
  */
 static int __init build_zonelists_node(pg_data_t *pgdat, struct zonelist *zonelist, int j, int k)
-{
+{	
+
+	// 第一次循环：j 为 0 ，k 等于 NORMAL: 此时 返回 2 ，zonelist：ZONE_NORMAL -> ZONE_DMA
+	// 第一次循环：j 为 0 ，k 等于 DMA: 此时 返回 1 ，zonelist: ZONE_DMA
+	// 不要陷入思维误区： 这里 的 case 没有 break
 	switch (k) {
 		struct zone *zone;
 	default:
@@ -1063,11 +1068,11 @@ static int __init build_zonelists_node(pg_data_t *pgdat, struct zonelist *zoneli
 	case ZONE_NORMAL:
 		zone = pgdat->node_zones + ZONE_NORMAL;
 		if (zone->present_pages)
-			zonelist->zones[j++] = zone;
+			zonelist->zones[j++] = zone; // zonelist->zones[0] = ZONE_NORMAL
 	case ZONE_DMA:
 		zone = pgdat->node_zones + ZONE_DMA;
 		if (zone->present_pages)
-			zonelist->zones[j++] = zone;
+			zonelist->zones[j++] = zone; // zonelist->zones[1] = ZONE_DMA
 	}
 
 	return j;
@@ -1084,21 +1089,33 @@ static void __init build_zonelists(pg_data_t *pgdat)
 {
 	int i, j, k, node, local_node;
 
-	local_node = pgdat->node_id;
+	local_node = pgdat->node_id;//  SMP 这里为 0
 	printk("Building zonelist for node : %d\n", local_node);
+
+	/*
+	zone list 的作用： 根据要分配的区域，构建分配兼容数组，策略自己定义：
+	如果是 SMP 那就很简单：NORMAL->DMA、DMA
+	如果是 NUMA 那就两种策略：
+	1、优先分配 本地NODE 的内存：NORMAL（NODE0）->DMA（NODE0）->NORMAL（NODE1）->DMA（NODE1）
+	2、优先分配 整个 系统物理 内存：NORMAL（NODE0）->NORMAL（NODE1）->DMA（NODE0）->DMA（NODE1）
+	如果是 高版本，存在： DMA 、DMA32、NORMAL 情况如上
+	 */ 
 	for (i = 0; i < MAX_NR_ZONES; i++) {
 		struct zonelist *zonelist;
 
+		// 第一次循环这里构建的是 NORMAL 的 zonelist
+		// 第一次循环这里构建的是 DMA 的 zonelist
 		zonelist = pgdat->node_zonelists + i;
 		memset(zonelist, 0, sizeof(*zonelist));
 
 		j = 0;
 		k = ZONE_NORMAL;
+
 		if (i & __GFP_HIGHMEM)
 			k = ZONE_HIGHMEM;
-		if (i & __GFP_DMA)
+		if (i & __GFP_DMA) // __GFP_DMA	0x01
 			k = ZONE_DMA;
-
+		// 返回 1
  		j = build_zonelists_node(pgdat, zonelist, j, k);
  		/*
  		 * Now we build the zonelist so that it contains the zones
@@ -1108,8 +1125,11 @@ static void __init build_zonelists(pg_data_t *pgdat)
  		 * zones coming right after the local ones are those from
  		 * node N+1 (modulo N)
  		 */
+		
+		// numa 架构执行，SMP 不执行以下两个 for 循环
  		for (node = local_node + 1; node < numnodes; node++)
  			j = build_zonelists_node(NODE_DATA(node), zonelist, j, k);
+
  		for (node = 0; node < local_node; node++)
  			j = build_zonelists_node(NODE_DATA(node), zonelist, j, k);
  
@@ -1117,6 +1137,7 @@ static void __init build_zonelists(pg_data_t *pgdat)
 	} 
 }
 
+// 在这里需要了解到：只有两个 ZONE（DMA、NORMAL） ，且 是 SMP 架构，不是 NUMA 所以情况就很简单
 void __init build_all_zonelists(void)
 {
 	int i;
@@ -1649,17 +1670,21 @@ void __init page_alloc_init(void)
  */
 void setup_per_zone_pages_min(void)
 {
+	// 设置 每一个 ZONE 中 的 最小的 page 页个数：1024 kb 转 页数： 1024kb / 4kb
 	unsigned long pages_min = min_free_kbytes >> (PAGE_SHIFT - 10);
-	unsigned long lowmem_pages = 0;
+	unsigned long lowmem_pages = 0; // 8GB 的页
 	struct zone *zone;
 	unsigned long flags;
 
 	/* Calculate total number of !ZONE_HIGHMEM pages */
 	for_each_zone(zone)
-		if (!is_highmem(zone))
+		if (!is_highmem(zone))  // x86 64 没有高位内存
 			lowmem_pages += zone->present_pages;
 
 	for_each_zone(zone) {
+		// 1、为什么要用 锁来保证线程安全：因为这里除了在BSP 初始化时使用以外，还可以给用户态系统调用使用，zone 是公共的,SMP 系统下，多个 CPU 共享
+		// 2、为什么要用自旋锁，同时关闭本地CPU 中断：因为多核共享，所以自旋锁用于防止多核 CPU 竞争，关中断的意义：以防止 本地CPU 在发生中断后调用 zone 的代码
+		// 总结： 自旋锁 保证多核 的原子性，关中断 保证自身的代码路径的原子性
 		spin_lock_irqsave(&zone->lru_lock, flags);
 		if (is_highmem(zone)) {
 			/*
@@ -1680,10 +1705,12 @@ void setup_per_zone_pages_min(void)
 			/* if it's a lowmem zone, reserve a number of pages 
 			 * proportionate to the zone's size.
 			 */
+			// 内存小：pages_min 就小，内存大 ：pages_min 就大
+			// DMA 和 NORMAL 的 zone 的 分母都不变，但是 DMA 的 present_pages < NORMAL 的 present_pages
 			zone->pages_min = (pages_min * zone->present_pages) / 
 			                   lowmem_pages;
 		}
-
+		// low 和 hign 都是根据 pages_min 来决定的，分别是 2 和 3 倍
 		zone->pages_low = zone->pages_min * 2;
 		zone->pages_high = zone->pages_min * 3;
 		spin_unlock_irqrestore(&zone->lru_lock, flags);
