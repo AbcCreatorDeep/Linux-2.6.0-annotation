@@ -31,7 +31,7 @@ extern unsigned long max_pfn;
  * 鸡生蛋 蛋生鸡 的问题： 内核初始化时，伙伴算法还没有，那么更别提 slab 算法，啥都没有，那么 怎么 分配 内存？
  */ 
 typedef struct bootmem_data {
-	unsigned long node_boot_start;
+	unsigned long node_boot_start; // 指向 当前 分配区 起始物理地址 在 非 NUMA 架构下这里为 0
 	unsigned long node_low_pfn;
 	void *node_bootmem_map;
 	unsigned long last_offset;

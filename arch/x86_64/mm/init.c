@@ -473,12 +473,18 @@ void __init mem_init(void)
 	int tmp;
 
 	/* How many end-of-memory variables you have, grandma! */
-	max_low_pfn = end_pfn;
+	// 物理内存的最后一个页帧
+	max_low_pfn = end_pfn; 
 	max_pfn = end_pfn;
 	num_physpages = end_pfn;
+
+
+	// 虚拟内存的最高地址： PAGE_OFFSET + end_pfn * PAGE_SIZE
 	high_memory = (void *) __va(end_pfn * PAGE_SIZE);
 
 	/* clear the zero-page */
+	// 特殊物理页： 怎么读都是 0 ，通常用来 做初始化（分配虚拟内存的时候，如果 不涉及到 写操作，只有读，
+	// 那么 直接让这些虚拟内存映射到这个页上不就行了）
 	memset(empty_zero_page, 0, PAGE_SIZE);
 
 	reservedpages = 0;
@@ -492,6 +498,8 @@ void __init mem_init(void)
 	max_mapnr = end_pfn;
 	if (!mem_map) BUG();
 
+
+	// bootmem 分配器中 位为 0 的页，需要释放给 伙伴算法了，因为之前初始化 zone 的时候 ，只初始化了 数据结构
 	totalram_pages += free_all_bootmem();
 
 	for (tmp = 0; tmp < end_pfn; tmp++)
@@ -502,8 +510,9 @@ void __init mem_init(void)
 			reservedpages++;
 #endif
 
-	after_bootmem = 1;
+	after_bootmem = 1;	
 
+	// 将内核的数据段、代码段、初始化段 写入 /proc/kcore 的 elf 格式的文件中
 	codesize =  (unsigned long) &_etext - (unsigned long) &_text;
 	datasize =  (unsigned long) &_edata - (unsigned long) &_etext;
 	initsize =  (unsigned long) &__init_end - (unsigned long) &__init_begin;

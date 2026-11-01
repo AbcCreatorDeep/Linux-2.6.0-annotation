@@ -153,10 +153,12 @@ static void destroy_compound_page(struct page *page, unsigned long order)
  * The bottom level table contains the map for the smallest allocatable
  * units of memory (here, pages), and each level above it describes
  * pairs of units from the levels below, hence, "buddies".
+ * 
  * At a high level, all that happens here is marking the table entry
  * at the bottom level available, and propagating the changes upward
  * as necessary, plus some accounting needed to play nicely with other
  * parts of the VM system.
+ * 
  * At each level, we keep one bit for each pair of blocks, which
  * is set to 1 iff only one of the pair is allocated.  So when we
  * are allocating or freeing one, we can derive the state of the
@@ -174,15 +176,30 @@ static inline void __free_pages_bulk (struct page *page, struct page *base,
 {
 	unsigned long page_idx, index;
 
-	if (order)
+	// 由于当前我们只看 释放 2^0 的页，所以 mask = 0xFFFFFFFFFFFFFFFF << 0 = 0xFFFFFFFFFFFFFFFF
+	if (order) // 如果 0rder 不为空，表示 2^order 个页是连续的，构成一个 compound page ，所以需要销毁 compound page
+		// 如何表示一个页 是一个 连续物理内存页中的一部分？page->flags 中放入 PG_compound 标志位
 		destroy_compound_page(page, order);
-	page_idx = page - base;
+		
+	// 当前释放的页 距离当前 zone 的起始页的偏移量 （ page 地址 - base 的地址）C 语言中，两个同类型的指针相减，得到的是它们之间的元素个数，而不是字节数
+	page_idx = page - base; 
+
+	// 假如释放的页不是0 ，而是 2^1 的页，那么 mask = 0xFFFFFFFFFFFFFFFF << 1 = 0xFFFFFFFFFFFFFFFE（1110）
+	// ~mask = 0x0000000000000001（0001）
+	// 因为当前走的是：order 为0 的单页，而单页没有伙伴，所以不检测 左右 伙伴页的地址问题，直接略过
 	if (page_idx & ~mask)
 		BUG();
-	index = page_idx >> (1 + order);
+	
+	// 每个 free_area 结构体中，map 位图中每一位表示 2^order 个页的状态，1 表示 已经分配，0 表示 空闲
+	// 注意：当前我们研究的上下文是：初始化的上下文，也即 里面是：zone->free_area[i].map = 
+	//		  (unsigned long *) alloc_bootmem_node(pgdat, bitmap_size); 默认为 0
 
-	zone->free_pages -= mask;
-	while (mask + (1 << (MAX_ORDER-1))) {
+	// 这里使用 高位 来定位 当前页 所在的 位图的索引下标（详细请看图解）
+	index = page_idx >> (1 + order);
+	// 0x0 - 0xFFFFFFFFFFFFFFFF 
+	zone->free_pages -= mask; // 空闲页的数据量递增 
+
+	while (mask + (1 << (MAX_ORDER-1))) { // 遍历从 2^0 -> 2^10
 		struct page *buddy1, *buddy2;
 
 		BUG_ON(area >= zone->free_area + MAX_ORDER);
@@ -198,6 +215,7 @@ static inline void __free_pages_bulk (struct page *page, struct page *base,
 		 */
 		buddy1 = base + (page_idx ^ -mask);
 		buddy2 = base + page_idx;
+
 		BUG_ON(bad_range(zone, buddy1));
 		BUG_ON(bad_range(zone, buddy2));
 		list_del(&buddy1->list);
@@ -206,6 +224,7 @@ static inline void __free_pages_bulk (struct page *page, struct page *base,
 		index >>= 1;
 		page_idx &= mask;
 	}
+
 	list_add(&(base + page_idx)->list, &area->free_list);
 }
 
@@ -246,17 +265,27 @@ free_pages_bulk(struct zone *zone, int count,
 	struct free_area *area;
 	struct page *base, *page = NULL;
 	int ret = 0;
-
-	mask = (~0UL) << order;
-	base = zone->zone_mem_map;
-	area = zone->free_area + order;
+	/**
+	 * 易错点： 这里不是 16进制  左移，而是 二进制移位，我写为 16进制，是为了方便看和书写
+	 * ~0: FFFF FFFF FFFF FFFF
+	 * mask 0: FFFF FFFF FFFF FFFF
+	 * mask 1: FFFF FFFF FFFF FFFF(1111) << 1 = FFFF FFFF FFFF FFFE(1110)
+	 * mask 2: FFFF FFFF FFFF FFFF(1111) << 2 = FFFF FFFF FFFF FFFC(1100)
+	 * mask 3: FFFF FFFF FFFF FFFF(1111) << 3 = FFFF FFFF FFFF FFF8(1000)
+	 * mask 4: FFFF FFFF FFFF FFFF(1111) << 4 = FFFF FFFF FFFF FFF0(0000)
+	 * mask 5: FFFF FFFF FFFF FFFF(1111) << 5 = FFFF FFFF FFFF FFE0(0000)
+	 * mask 6: FFFF FFFF FFFF FFFF(1111) << 6 = FFFF FFFF FFFF FFC0(0000)
+	 *  */ 
+	mask = (~0UL) << order;	// order 总共是：0 - 10 ( MAR_ORDER = 11 )，每一级 都是 2 的 order 次方 个页的数量
+	base = zone->zone_mem_map; // 当前 zone 的起始页帧结构：DMA 0M 的那个页的结构地址，Normal 16M 的那个页的结构地址
+	area = zone->free_area + order; // 当前要释放 到 对应 的 伙伴算法的 2^order 的 free_area 结构体中
 	spin_lock_irqsave(&zone->lock, flags);
 	zone->all_unreclaimable = 0;
 	zone->pages_scanned = 0;
-	while (!list_empty(list) && count--) {
+	while (!list_empty(list) && count--) {  // 释放 count 个页，或者 list 中的所有页
 		page = list_entry(list->prev, struct page, list);
 		/* have to delete it as __free_pages_bulk list manipulates */
-		list_del(&page->list);
+		list_del(&page->list); 
 		__free_pages_bulk(page, base, zone, area, mask, order);
 		ret++;
 	}
@@ -442,6 +471,8 @@ void drain_local_pages(void)
  * Free a 0-order page
  */
 static void FASTCALL(free_hot_cold_page(struct page *page, int cold));
+
+// 通用函数： cold 页是指 访问频率低的页（冷页）， hot 页是指 访问频率高的页（热页）
 static void free_hot_cold_page(struct page *page, int cold)
 {
 	struct zone *zone = page_zone(page);
@@ -451,10 +482,16 @@ static void free_hot_cold_page(struct page *page, int cold)
 	kernel_map_pages(page, 1, 0);
 	inc_page_state(pgfree);
 	free_pages_check(__FUNCTION__, page);
+	// 去当前 CPU 的 热页的缓存
 	pcp = &zone->pageset[get_cpu()].pcp[cold];
 	local_irq_save(flags);
+
+	// 超出 high 水位线，直接释放到 buddy 算法
 	if (pcp->count >= pcp->high)
+		// batch 表示两个意义： 1、每次释放的页的数量 2、每次从伙伴系统中获取的页的数量
 		pcp->count -= free_pages_bulk(zone, pcp->batch, &pcp->list, 0);
+
+	//  没超high 就直接挂链表
 	list_add(&page->list, &pcp->list);
 	pcp->count++;
 	local_irq_restore(flags);
@@ -531,6 +568,8 @@ static struct page *buffered_rmqueue(struct zone *zone, int order, int cold)
  * sized machine, GFP_HIGHMEM and GFP_KERNEL requests basically leave the DMA
  * zone untouched.
  */
+
+// 直接向 伙伴算法分配页 的 通用函数，这里的分配单位 只能是页
 struct page *
 __alloc_pages(unsigned int gfp_mask, unsigned int order,
 		struct zonelist *zonelist)
@@ -725,6 +764,9 @@ void __pagevec_free(struct pagevec *pvec)
 		free_hot_cold_page(pvec->pages[i], pvec->cold);
 }
 
+
+// 通用页释放算法： 将当前 page 页 还给  2^order 处的伙伴算法 
+//1、 从 allocate_pages 分配的页，也可以通过该方法还给伙伴算法 2、在系统初始化时，也会利用该方法将 bootmem 的空闲页还给伙伴算法
 void __free_pages(struct page *page, unsigned int order)
 {
 	if (!PageReserved(page) && put_page_testzero(page)) {
@@ -1065,14 +1107,17 @@ static int __init build_zonelists_node(pg_data_t *pgdat, struct zonelist *zoneli
 #endif
 			zonelist->zones[j++] = zone;
 		}
+		// no break；
 	case ZONE_NORMAL:
 		zone = pgdat->node_zones + ZONE_NORMAL;
 		if (zone->present_pages)
 			zonelist->zones[j++] = zone; // zonelist->zones[0] = ZONE_NORMAL
+		// no break；
 	case ZONE_DMA:
 		zone = pgdat->node_zones + ZONE_DMA;
 		if (zone->present_pages)
 			zonelist->zones[j++] = zone; // zonelist->zones[1] = ZONE_DMA
+		// no break；
 	}
 
 	return j;
@@ -1376,8 +1421,8 @@ static void __init free_area_init_core(struct pglist_data *pgdat,
 	    // 把不用的 HIGHMEM 也算在里面了，十分不合理
 		pgdat->nr_zones = j+1;
 
-		zone->zone_mem_map = lmem_map;
-		zone->zone_start_pfn = zone_start_pfn;// 当前 zone的起始页帧号：DMA 0，NORMAL：16M的那个页的页帧号
+		zone->zone_mem_map = lmem_map; // 当前zone 的起始页的 page 结构地址
+		zone->zone_start_pfn = zone_start_pfn;// 当前 zone 的起始页帧号：DMA 0，NORMAL：16M的那个页的页帧号
 
 		if ((zone_start_pfn) & (zone_required_alignment-1))
 			printk("BUG: wrong zone alignment, it will crash\n");
@@ -1634,7 +1679,8 @@ struct seq_operations vmstat_op = {
 #endif /* CONFIG_PROC_FS */
 
 static void __devinit init_page_alloc_cpu(int cpu)
-{
+{	
+	// per cpu 数据
 	struct page_state *ps = &per_cpu(page_states, cpu);
 	memset(ps, 0, sizeof(*ps));
 }

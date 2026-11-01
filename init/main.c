@@ -410,14 +410,18 @@ asmlinkage void __init start_kernel(void)
 	 */
 	smp_prepare_boot_cpu(); // 标记 当前 BSP CPU 在 内核 可用 CPU map 中的位置
 
-	build_all_zonelists();  // 
+	build_all_zonelists();  // 初始化 pgdata 中的 zone_list 分配链，当前版本 在 x86 64 上 只有  两条链可用：NORMAL->DMA->NULL ，DMA->NULL
 
-	page_alloc_init();
+	page_alloc_init(); // 初始化 per cpu 结构 的 page_state 的结构，使得后续可以按CPU 统计 当前 CPU 操作的页数据
 	
+	// GRUB 是 BL ，被 BIOS 加载进来内存的第一个程序，用于 初始化环境，同时准备数据放入一页 boot_param  后续加载内核到内存，
+	// 转移控制权给内核，同时传递这个 boot_param 地址
 	printk("Kernel command line: %s\n", saved_command_line);
 	parse_args("Booting kernel", command_line, __start___param,
 		   __stop___param - __start___param,
 		   &unknown_bootoption);
+
+	// 当前的目的： 研究 内存分配 机制，这里先不管了
 	trap_init();
 	rcu_init();
 	init_IRQ();
@@ -443,8 +447,14 @@ asmlinkage void __init start_kernel(void)
 	}
 #endif
 	page_address_init();
-	mem_init();
-	kmem_cache_init();
+
+	
+	mem_init(); // 初始化 伙伴算法
+
+	kmem_cache_init();// 有了 伙伴算法，自然就可以 初始化 slab 算法
+
+
+
 	if (late_time_init)
 		late_time_init();
 	calibrate_delay();

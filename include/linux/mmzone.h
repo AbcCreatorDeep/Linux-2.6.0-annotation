@@ -155,7 +155,7 @@ struct zone {
 	 * Discontig memory support fields.
 	 */
 	struct pglist_data	*zone_pgdat;
-	struct page		*zone_mem_map;
+	struct page		*zone_mem_map; // 当前 zone 的起始页的 page 结构地址
 	/* zone_start_pfn == zone_start_paddr >> PAGE_SHIFT */
 	unsigned long		zone_start_pfn;
 
@@ -205,9 +205,10 @@ typedef struct pglist_data {
 	struct zone node_zones[MAX_NR_ZONES]; // 多余一个 highmem ，64 bit 没有 highmem
 	struct zonelist node_zonelists[MAX_NR_ZONES]; // 数组固定 3个，64 bit 没有 highmem
 	int nr_zones;
-	struct page *node_mem_map;
+	struct page *node_mem_map; // page 结构指针的起始地址
 	unsigned long *valid_addr_bitmap;
-	struct bootmem_data *bdata;
+	// 当前节点的 bootmem 分配器，当 伙伴算法建立后，这个指针就没用了（高版本将该分配器废掉了，同时引入了 新的 另外一个 临时分配器，且与 该结构分离）
+	struct bootmem_data *bdata; 
 	unsigned long node_start_pfn;
 	unsigned long node_present_pages; /* total number of physical pages */
 	unsigned long node_spanned_pages; /* total size of physical page

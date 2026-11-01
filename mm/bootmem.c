@@ -42,6 +42,7 @@ unsigned long __init bootmem_bootmap_pages (unsigned long pages)
 
 /*
  * Called once to set up the allocator itself.
+ init_bootmem_core(&contig_page_data, start, 0, pages))
  */
 static unsigned long __init init_bootmem_core (pg_data_t *pgdat,
 	unsigned long mapstart, unsigned long start, unsigned long end)
@@ -266,24 +267,37 @@ static unsigned long __init free_all_bootmem_core(pg_data_t *pgdat)
 
 	count = 0;
 	/* first extant page of the node */
-	page = virt_to_page(phys_to_virt(bdata->node_boot_start));
+	/** 
+	 * 存放 page 结构 数组的起始地址:mem_map 地址
+	 * #define pfn_to_page(pfn)	(mem_map + (pfn))
+	 * node_boot_start = 0
+	 * 所以这里从 物理页帧为0 处开始 向上处理
+	 * */ 
+	page = virt_to_page(phys_to_virt(bdata->node_boot_start)); // 此时 page 指针指向 mem_map[0];
 	idx = bdata->node_low_pfn - (bdata->node_boot_start >> PAGE_SHIFT);
 	map = bdata->node_bootmem_map;
 	for (i = 0; i < idx; ) {
+		// BITS_PER_LONG 等于 64 ，long 类型在 64bit 的位数
+		// map 地址中放了 N 个 bit ，现在转为 unsigned long v 表示将这些为 按 8byte = 64 bit 批量处理
+		// 按位取反后，1 变为 了 可以还给 伙伴算法的页
+		// 注意： struct page *page  page 是一个指针，指针++ 等于 page[index++] 
 		unsigned long v = ~map[i / BITS_PER_LONG];
-		if (v) {
+		if (v) {	// 释放其中为 1 的 index 下标 所表示的 4KB 物理页
 			unsigned long m;
+			// 这里 通过 左移  m 去 看每一位是否为 1
 			for (m = 1; m && i < idx; m<<=1, page++, i++) {
-				if (v & m) {
+				// 每次 看当前 m 所在的 位 的 是否为 1 ： 1->10->100->1000->10000->100000->....->1000 0000
+				if (v & m) {  // 思考：这里为什么一页一页的释放？ 明明可能存在：111111111111 的连续页
 					count++;
 					ClearPageReserved(page);
 					set_page_count(page, 1);
 					__free_page(page);
 				}
 			}
-		} else {
-			i+=BITS_PER_LONG;
-			page += BITS_PER_LONG;
+			
+		} else { // 当前 8byte 也就是 64bit 中 没有空闲页
+			i+=BITS_PER_LONG; // 跳到下一个 map 的 index 的起始地址处: 64 -> 128 -> 192 ....
+			page += BITS_PER_LONG; // 一次处理64个bit，一个bit 代表一个 页，总共处理了 64个页 ,此时 page 指针指向 mem_map[64]
 		}
 	}
 	total += count;
