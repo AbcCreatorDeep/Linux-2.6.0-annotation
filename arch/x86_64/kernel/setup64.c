@@ -190,7 +190,8 @@ void pda_init(int cpu)
 		pda->irqstackptr = boot_cpu_stack; 
 		level4 = init_level4_pgt;  // 获取 head.S 中的临时页表
 	} else { // BSP 负责初始化唤醒 AP，AP 也会执行这段代码
-		level4 = (pml4_t *)__get_free_pages(GFP_ATOMIC, 0);  // 分配一个页的数据
+		 // 分配一个页的数据(BSP 已经执行了 start_kernel 将伙伴算法初始化了，所以这里直接从伙伴算法中分配一页，用来当做当前AP CPU 的页表)
+		level4 = (pml4_t *)__get_free_pages(GFP_ATOMIC, 0); 
 		if (!level4) 
 			panic("Cannot allocate top level page for cpu %d", cpu); 
 		pda->irqstackptr = (char *)

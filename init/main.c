@@ -448,10 +448,11 @@ asmlinkage void __init start_kernel(void)
 #endif
 	page_address_init();
 
+	// 初始化 伙伴算法: zone->free_area[] 中的 free_list 链表，初始化 buddy 系统的内存分配器，初始化完毕后，伙伴算法可以使用了，当该方法执行完毕后，bootmem 就没用了
+	mem_init(); 
 	
-	mem_init(); // 初始化 伙伴算法
-
-	kmem_cache_init();// 有了 伙伴算法，自然就可以 初始化 slab 算法
+	// 有了 伙伴算法，自然就可以 初始化 slab 算法
+	kmem_cache_init();
 
 
 

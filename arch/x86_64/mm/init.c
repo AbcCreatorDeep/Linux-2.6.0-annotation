@@ -363,8 +363,10 @@ void __init init_memory_mapping(void)
 
 extern struct x8664_pda cpu_pda[NR_CPUS];
 
+// BSS 段，加载到内存后自动分配内存并且清0
 static unsigned long low_pml4[NR_CPUS];
 
+// for 循环将 所有 CPU 的低端物理内存的映射页表项 交换到 low_pml4 中，BSP 的低端物理内存的映射页表项 交换到 low_pml4[0] 中
 void swap_low_mappings(void)
 {
 	int i;
@@ -372,13 +374,18 @@ void swap_low_mappings(void)
 	        unsigned long t;
 		if (!cpu_pda[i].level4_pgt) 
 			continue;
-		t = cpu_pda[i].level4_pgt[0];
-		cpu_pda[i].level4_pgt[0] = low_pml4[i];
+
+		t = cpu_pda[i].level4_pgt[0]; // 原来的映射
+
+		cpu_pda[i].level4_pgt[0] = low_pml4[i];  // 该值为 0
+
 		low_pml4[i] = t;
 	}
+	// 因为 修改了页表，需要让 TLB 感知到页表变换，重新加载映射信息，所以需要刷新 TLB
 	flush_tlb_all();
 }
 
+// 不是 SMP ，只有一个 CPU 的情况下，也会复用这段代码
 void zap_low_mappings(void)
 {
 	swap_low_mappings();
@@ -502,11 +509,13 @@ void __init mem_init(void)
 	// bootmem 分配器中 位为 0 的页，需要释放给 伙伴算法了，因为之前初始化 zone 的时候 ，只初始化了 数据结构
 	totalram_pages += free_all_bootmem();
 
+
+	// 在 mem_map 数组中的 page 结构指针都有效吗？答案是：不是，只是在 连续物理内存的架构中。浪费了一点点 内存： 低端内存的 MMIO 映射区（A0000）
 	for (tmp = 0; tmp < end_pfn; tmp++)
 		/*
 		 * Only count reserved RAM pages
 		 */
-		if (page_is_ram(tmp) && PageReserved(mem_map+tmp))
+		if (page_is_ram(tmp) && PageReserved(mem_map+tmp)) // 归还给伙伴算法时，将会清除该标志位，所以只有包含该标志位的物理页，才属于保留页
 			reservedpages++;
 #endif
 
@@ -540,8 +549,12 @@ void __init mem_init(void)
 	 * protected-mode entry to work. We zap these entries only after
 	 * the WP-bit has been tested.
 	 */
-#ifndef CONFIG_SMP
-	zap_low_mappings();
+
+	// BSP 后续启动 AP 时， AP 在初始化时，也需要 16->32->64 bit ，此时也需要同  BSP 一样 访问 低端物理内存的映射，所以 BSP 不能释放低端物理内存的映射
+#ifndef CONFIG_SMP // 注意：这里 是非 SMP 的情况，如果是 SMP ，后续 在启动 AP 时，AP 也会执行到这里，AP 也会执行 zap_low_mappings()，所以这里不需要执行
+	// 现在有一个问题： 在 head.S 中，内核的页表 映射了 低端物理内存，原来这个映射的用途是在内核还没有建立好线性映射时临时使用的
+	// 原来讲过的： 在内核初始化时，需要 建立一个： 虚拟内存 等于 物理内存的 映射，这个映射的目的就是为了让内核可以直接访问物理内存
+	zap_low_mappings(); 
 #endif
 }
 

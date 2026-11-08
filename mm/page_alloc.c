@@ -180,13 +180,25 @@ static inline void __free_pages_bulk (struct page *page, struct page *base,
 	if (order) // 如果 0rder 不为空，表示 2^order 个页是连续的，构成一个 compound page ，所以需要销毁 compound page
 		// 如何表示一个页 是一个 连续物理内存页中的一部分？page->flags 中放入 PG_compound 标志位
 		destroy_compound_page(page, order);
-		
+
 	// 当前释放的页 距离当前 zone 的起始页的偏移量 （ page 地址 - base 的地址）C 语言中，两个同类型的指针相减，得到的是它们之间的元素个数，而不是字节数
 	page_idx = page - base; 
 
-	// 假如释放的页不是0 ，而是 2^1 的页，那么 mask = 0xFFFFFFFFFFFFFFFF << 1 = 0xFFFFFFFFFFFFFFFE（1110）
-	// ~mask = 0x0000000000000001（0001）
-	// 因为当前走的是：order 为0 的单页，而单页没有伙伴，所以不检测 左右 伙伴页的地址问题，直接略过
+	/**
+	 * 可见这里以 低位 为对齐标准，因为 每一层的伙伴的 index 不一样，观察下 这些 起始 index 的末尾 都是 偶数，且按照对应 level 对齐
+	 * 
+	 * 0 层：没有伙伴
+	 * 1 层： 0，2（10），4，6，8
+	 * 2 层： 0，4（100），8，12
+	 * 3 层： 0，8（1000），16，24
+	 * 4 层： 0，16（10000），32，48
+	 * 
+	 * order = 0 mask = 0xFFFFFFFFFFFFFFFF << 0 = 0xFFFFFFFFFFFFFFFF（1111）~mask = 0x0000000000000000（0000）
+	 * order = 1 mask = 0xFFFFFFFFFFFFFFFF << 1 = 0xFFFFFFFFFFFFFFFE（1110）~mask = 0x0000000000000001（0001）
+	 * order = 2 mask = 0xFFFFFFFFFFFFFFFF << 2 = 0xFFFFFFFFFFFFFFFC（1100）~mask = 0x0000000000000003（0011）
+	 * order = 3 mask = 0xFFFFFFFFFFFFFFFF << 3 = 0xFFFFFFFFFFFFFFF8（1000）~mask = 0x0000000000000007（0111）
+	 * order = 4 mask = 0xFFFFFFFFFFFFFFFF << 4 = 0xFFFFFFFFFFFFFFF0（0000）~mask = 0x000000000000000F（1111）
+	 */
 	if (page_idx & ~mask)
 		BUG();
 	
@@ -196,13 +208,21 @@ static inline void __free_pages_bulk (struct page *page, struct page *base,
 
 	// 这里使用 高位 来定位 当前页 所在的 位图的索引下标（详细请看图解）
 	index = page_idx >> (1 + order);
-	// 0x0 - 0xFFFFFFFFFFFFFFFF 
-	zone->free_pages -= mask; // 空闲页的数据量递增 
+	// 0x0 - 0xFFFFFFFFFFFFFFFF  
+	zone->free_pages -= mask; // 空闲页的数据量递增 : 无符号数的 减法 0 - 0xFFFFFFFFFFFFFFFF + 2^64 = 1 ,无符号数的 减法 1 - 0xFFFFFFFFFFFFFFFF + 2^64 = 2
 
 	while (mask + (1 << (MAX_ORDER-1))) { // 遍历从 2^0 -> 2^10
 		struct page *buddy1, *buddy2;
 
 		BUG_ON(area >= zone->free_area + MAX_ORDER);
+		/**
+		 *  若当前 area->map[index] 位图 是 0 ，那么此时执行完该方法：返回 0 ， 0 变为 1
+		 *  若当前 area->map[index] 位图 是 1 ，那么此时执行完该方法：返回 1 ， 1 变为 0
+		 *  若当前 归还的是 0 阶 0 索引下标的页，由于初始化时，位图都是 0 ，所以，此时： 返回 0 ，同时  0 -> 1，所以 该 0 下标的页放入 0阶 free_list 链表中 
+		 *  若当前 归还的是 0 阶 1 索引下标的页，由于上面已经将 0 阶的位图设置为 1 ，所以，此时： 返回 1 ，同时  1 -> 0 ，所以 该 1 下标的页 继续 下面的 buddy 1  的计算
+		 *  向上遍历，找到 对应阶 的 伙伴页是 空闲的， 然后插入对应阶的 空闲链表，而由于 此时 1 阶没有空闲页，所以 这里将 0 阶的 0 下标的页 和 0 阶的 1 下标的页 
+		 *  合并为 1 阶的 0 下标的页，插入到 1 阶的 free_list 链表中
+		 **/
 		if (!__test_and_change_bit(index, area->map))
 			/*
 			 * the buddy page is still allocated.
@@ -212,20 +232,43 @@ static inline void __free_pages_bulk (struct page *page, struct page *base,
 		 * Move the buddy up one level.
 		 * This code is taking advantage of the identity:
 		 * 	-mask = 1+~mask
+		 * 此时 mask = 0xFFFFFFFFFFFFFFFF ，-mask = 0x0000000000000001（001）第 O 阶
+		 * 
+		 * 若 page_idx ： 0 ，那么 buddy1 = (000 ^ 001) = 1，buddy2 = 0
+		 * 若 page_idx ： 1 ，那么 buddy1 = (001 ^ 001) = 0，buddy2 = 1
+		 * 
+		 * 若 page_idx ： 2 ，那么 buddy1 = (010 ^ 001) = 3，buddy2 = 2
+		 * 若 page_idx ： 3 ，那么 buddy1 = (011 ^ 001) = 2，buddy2 = 3
+		 * 
+		 * 若 page_idx ： 4 ，那么 buddy1 = (100 ^ 001) = 5，buddy2 = 4
+		 * 若 page_idx ： 5 ，那么 buddy1 = (101 ^ 001) = 4，buddy2 = 5
+		 * 
+		 * 此时 mask = 0xFFFFFFFFFFFFFFFE，那么 -mask = 0x0000000000000002（010）第 1 阶
+		 * 
+		 * 若 page_idx ： 0 ，那么 buddy1 = (000 ^ 010) = 2，buddy2 = 0
+		 * 若 page_idx ： 2 ，那么 buddy1 = (010 ^ 010) = 0，buddy2 = 2
+		 * 
+		 * 若 page_idx ： 4 ，那么 buddy1 = (100 ^ 010) = 6，buddy2 = 4
+		 * 若 page_idx ： 6 ，那么 buddy1 = (110 ^ 010) = 4，buddy2 = 6
+		 * 
+		 * 
 		 */
+
+		// 只要认定 另外一个 伙伴 是空闲的，那么就将他们合并
 		buddy1 = base + (page_idx ^ -mask);
 		buddy2 = base + page_idx;
 
 		BUG_ON(bad_range(zone, buddy1));
 		BUG_ON(bad_range(zone, buddy2));
-		list_del(&buddy1->list);
-		mask <<= 1;
-		area++;
+
+		list_del(&buddy1->list); // 先将伙伴页从 当前 阶 中移除
+		mask <<= 1; //  mask = 0xFFFFFFFFFFFFFFFF << 1 = 0xFFFFFFFFFFFFFFFE（1110）~mask = 0x0000000000000001（0001）
+		area++; // 指针每次 ++ 等价于： area = area + sizeof(struct free_area) ，也即指向下一个阶的 free_area 结构体
 		index >>= 1;
 		page_idx &= mask;
 	}
 
-	list_add(&(base + page_idx)->list, &area->free_list);
+	list_add(&(base + page_idx)->list, &area->free_list); //  最后将合并的伙伴页 添加到所属的 order 的 free_list 链表中
 }
 
 static inline void free_pages_check(const char *function, struct page *page)

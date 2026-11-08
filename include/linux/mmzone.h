@@ -75,12 +75,9 @@ struct zone {
 	/*
 	 * Commonly accessed fields:
 	 */
-	spinlock_t		lock;
 	unsigned long		free_pages;
+	spinlock_t		lock;
 	unsigned long		pages_min, pages_low, pages_high;
-
-	ZONE_PADDING(_pad1_)
-
 	spinlock_t		lru_lock;	
 	struct list_head	active_list;
 	struct list_head	inactive_list;
@@ -89,58 +86,14 @@ struct zone {
 	unsigned long		nr_inactive;
 	int			all_unreclaimable; /* All pages pinned */
 	unsigned long		pages_scanned;	   /* since last reclaim */
-
-	ZONE_PADDING(_pad2_)
-
-	/*
-	 * prev_priority holds the scanning priority for this zone.  It is
-	 * defined as the scanning priority at which we achieved our reclaim
-	 * target at the previous try_to_free_pages() or balance_pgdat()
-	 * invokation.
-	 *
-	 * We use prev_priority as a measure of how much stress page reclaim is
-	 * under - it drives the swappiness decision: whether to unmap mapped
-	 * pages.
-	 *
-	 * temp_priority is used to remember the scanning priority at which
-	 * this zone was successfully refilled to free_pages == pages_high.
-	 *
-	 * Access to both these fields is quite racy even on uniprocessor.  But
-	 * it is expected to average out OK.
-	 */
 	int temp_priority;
 	int prev_priority;
-
 	/*
 	 * free areas of different sizes
 	 */
 	// 管理 0 - 10 中的伙伴页的链表
 	struct free_area	free_area[MAX_ORDER]; 
 
-	/*
-	 * wait_table		-- the array holding the hash table
-	 * wait_table_size	-- the size of the hash table array
-	 * wait_table_bits	-- wait_table_size == (1 << wait_table_bits)
-	 *
-	 * The purpose of all these is to keep track of the people
-	 * waiting for a page to become available and make them
-	 * runnable again when possible. The trouble is that this
-	 * consumes a lot of space, especially when so few things
-	 * wait on pages at a given time. So instead of using
-	 * per-page waitqueues, we use a waitqueue hash table.
-	 *
-	 * The bucket discipline is to sleep on the same queue when
-	 * colliding and wake all in that wait queue when removing.
-	 * When something wakes, it must check to be sure its page is
-	 * truly available, a la thundering herd. The cost of a
-	 * collision is great, but given the expected load of the
-	 * table, they should be so rare as to be outweighed by the
-	 * benefits from the saved space.
-	 *
-	 * __wait_on_page_locked() and unlock_page() in mm/filemap.c, are the
-	 * primary users of these fields, and in mm/page_alloc.c
-	 * free_area_init_core() performs the initialization of them.
-	 */
 	wait_queue_head_t	* wait_table;
 	unsigned long		wait_table_size;
 	unsigned long		wait_table_bits;

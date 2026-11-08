@@ -85,6 +85,7 @@ static inline void *kmalloc(size_t size, int flags)
 		else \
 			i++;
 #include "kmalloc_sizes.h"
+
 #undef CACHE
 		{
 			extern void __you_cannot_kmalloc_that_much(void);
